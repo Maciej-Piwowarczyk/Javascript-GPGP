@@ -1,0 +1,218 @@
+// This code is used within a Google Sheet that tracks inventory and allows for checking in/out, updating, and searching for inventory within a database.
+
+//global variables
+sh = SpreadsheetApp.getActiveSpreadsheet();
+shForm = sh.getSheetByName ("Form");
+shData = sh.getSheetByName ("Database");
+
+/////////////////////////////////////
+// Helper functions
+function row2col(row) {
+  return row[0].map(function(elem) {return [elem];});
+}
+
+function getAllIndices(listIDs,listCkdIn,chkVal,val) {
+    var indices = [], i;
+    for(i = 0; i < listIDs.length; i++)
+        if (listIDs[i] === val)
+            if (listCkdIn[i] === chkVal)
+                indices.push(i+1);
+    return indices;
+}
+
+/////////////////////////////////////
+// Cleaning functions for resetting the form and messages
+function clearForm() {
+  // Clears inputs from input boxes
+  shForm.getRange("D5:D13").clearContent()
+}
+
+function clearMess() {
+  // Clears Warning Message box
+  shForm.getRange("G5:G13").clearContent()
+}
+
+function clear() {
+  clearForm()
+  clearMess()
+}
+
+/////////////////////////////////////
+// Adding, Updating, and Searching for a product
+function addNewProduct() {
+  clearMess()
+
+  // Get Product Name, Type, Description, Value, and Quantity
+  rng_val = shForm.getRange("D7:D11").getValues();
+
+  // Check if required values are in the correct format
+  errors = 0
+  if (rng_val[1][0] == "") {
+    shForm.getRange("G8").setValue("You need to set a Product Type!")
+    errors = 1
+  } 
+  if (typeof rng_val[3][0] != "number") {
+    shForm.getRange("G10").setValue("The product's value must be a number!")
+    errors = 1
+  }
+  if (typeof rng_val[4][0] != "number") {
+    shForm.getRange("G11").setValue("The product's quantity must be a number!")
+    errors = 1
+  }
+
+  // If there are no errors: save the product, clear the form, and inform the user
+  if (errors == 0) {
+    clearMess()
+    last_row = shData.getLastRow();
+    shData.appendRow([rng_val[1][0] + "-" + last_row, rng_val[0][0],rng_val[1][0],rng_val[2][0],rng_val[3][0],rng_val[4][0]]);
+    clearForm()
+    shForm.getRange("G9").setValue("Product " + rng_val[1][0] + "-" + last_row + " has been successfully added to the database.")
+  } 
+}
+
+function search(){
+  clearMess()
+
+  // Check if there's a product to search for
+  searchID = shForm.getRange("D5").getValue().trim();
+  if (searchID == "") {
+    shForm.getRange("G5").setValue("You must include a Product ID to search for an item.")
+    return;
+  }
+  
+  // Check if the search ID is in the database. If yes, grab its index (+1 for indexing shenanigans)
+  shDataIDs = shData.getRange("A:A").getValues().flat();
+  if (shDataIDs.includes(searchID)) {
+    searchIDindex = shDataIDs.indexOf(searchID) + 1
+  } else {
+    shForm.getRange("G5").setValue("This Product ID is not in the database.")
+  }
+    
+  // Grab everything except for the Product ID, make it into a column, then put it into the form
+  searchIDdata = shData.getRange("B"+searchIDindex.toString()+":"+"F"+searchIDindex.toString()).getValues()
+  searchIDdata = row2col(searchIDdata)
+  shForm.getRange("D7:D11").setValues(searchIDdata)
+}  
+
+function updateProduct(){
+  clearMess()
+
+  // Check if the search ID is in the database. If yes, grab its index (+1 for indexing shenanigans) and get to work
+  searchID = shForm.getRange("D5").getValue().trim();
+  shDataIDs = shData.getRange("A:A").getValues().flat();
+  if (shDataIDs.includes(searchID)) {
+    searchIDindex = shDataIDs.indexOf(searchID) + 1
+
+    // Grabbing both the input and current data
+    inputInfo = shForm.getRange("D7:D11").getValues().flat()
+    curreInfo = shData.getRange("B"+searchIDindex.toString()+":"+"F"+searchIDindex.toString()).getValues()
+    
+    // Create a new array that will be the values in the form unless the value is empty, in which case we grab from the current info
+    updatInfo = [[]]
+    for (i = 0; i < 5; i++) {
+      if (inputInfo[i] == "") {
+        updatInfo[0].push(curreInfo[0][i])
+      } else {
+        updatInfo[0].push(inputInfo[i])
+      }      
+    }
+
+    // Update the database, then update the form with all the new info
+    shData.getRange("B"+searchIDindex.toString()+":"+"F"+searchIDindex.toString()).setValues(updatInfo)
+    updatInfo = row2col(updatInfo)
+    shForm.getRange("D7:D11").setValues(updatInfo)
+
+    // Inform the user
+    shForm.getRange("G9").setValue("The product " + searchID + " has been successfully updated with the values in the form.")
+  } else {
+    shForm.getRange("G5").setValue("This Product ID is not in the database.")
+  }
+}
+
+/////////////////////////////////////
+// Checking a product in or out
+function checkoutProduct() {
+  clearMess()
+
+  searchID = shForm.getRange("D5").getValue().trim();
+
+  // Check if the product is part of a protected class
+  const disallowedTypes = ["TEC"];
+  if (disallowedTypes.includes(searchID.substring(0,3))) {
+    shForm.getRange("G9").setValue("The product you are attempting to check out is part of a protected type and is not eligible for check-out.")
+    return;
+  }
+
+  // Check if a user has been selected for check-out
+  user = shForm.getRange("D13").getValue()
+  if (user == "") {
+    shForm.getRange("G13").setValue("Must select a user for check-out.")
+    return;
+  }
+
+  // Check if the product is indeed in the database
+  shDataIDs = shData.getRange("A:A").getValues().flat();
+  if (shDataIDs.includes(searchID)) {
+    searchIDindex = shDataIDs.indexOf(searchID) + 1
+  } else {
+    shForm.getRange("G5").setValue("This Product ID is not in the database.")
+    return;
+  }
+
+  quant = shForm.getRange("D11").getValue()
+  searchIDquantity = shData.getRange("F"+searchIDindex.toString()).getValues();
+  Logger.log(searchIDquantity)
+  if (quant > searchIDquantity) {
+    shForm.getRange("G9").setValue("You are attempting to check-out more of this product than is currently in the database.")
+    return;
+  }
+
+  // Check-out the product, noting date/time, user, and quantity
+  shCout = sh.getSheetByName("Check Out");
+  
+  const now = new Date();
+  shCout.appendRow([now,'',searchID,searchIDquantity[0][0],user]);
+  shForm.getRange("G9").setValue(searchIDquantity[0][0].toString() + " of Product " + searchID + " checked out successfully to " + user + ".")
+}
+
+function checkinProduct() {
+  clearMess()
+
+  // Check if the search ID is in the database
+  searchID = shForm.getRange("D5").getValue().trim();
+  shDataIDs = shData.getRange("A:A").getValues().flat();
+  if (!shDataIDs.includes(searchID)) {
+    shForm.getRange("G9").setValue("The product you are trying to check in does not appear in the database.")
+    return;
+  }
+
+  // Grab some columns and check if the item is currently checked out
+  shCout = sh.getSheetByName("Check Out");
+  shCoutCkdIn = shCout.getRange("B:B").getValues().flat()
+  shCoutIDs = shCout.getRange("C:C").getValues().flat()
+  searchIDindices = getAllIndices(shCoutIDs, shCoutCkdIn,"", searchID)
+  if (searchIDindices.length == 0) {
+    shForm.getRange("G9").setValue("The product you are trying to check in is not currently checked out.")
+    return;
+  }
+
+  // Of the items checked out, check if it is checked out by the user trying to check it back in
+  shCoutUsers = shCout.getRange("E:E").getValues().flat()
+  user = shForm.getRange("D13").getValue()
+  tempIndices = []
+  for (i = 0; i < searchIDindices.length; i++) {
+    if (shCoutUsers[searchIDindices[i]-1] === user) {
+      tempIndices.push(searchIDindices[i])
+    }
+  }
+  searchIDindices = tempIndices
+  if (searchIDindices.length == 0) {
+    shForm.getRange("G9").setValue("The product you are trying to check in is not currently checked out by " + user + ".")
+    return;
+  }
+
+  // Check in the item and inform the user
+  const now = new Date();
+  shCout.getRange("B" + searchIDindices[0].toString()).setValue(now)
+  shForm.getRange("G9").setValue("The product " + searchID + " checked out by " + user + " has been checked in at " + now.toString() + ".")
+}
